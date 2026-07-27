@@ -13,6 +13,8 @@ app = FastAPI()
 def health():
     return {"status": "ok"}
 
+from tasks import process_reading_async
+
 @app.post("/readings", response_model=SensorReadingOut)
 def ingest_reading(reading: SensorReadingCreate, db: Session = Depends(get_db)):
     new_reading = SensorReading(
@@ -23,6 +25,9 @@ def ingest_reading(reading: SensorReadingCreate, db: Session = Depends(get_db)):
     db.add(new_reading)
     db.commit()
     db.refresh(new_reading)
+
+    process_reading_async.delay(reading.sensor_id, reading.metric, reading.value)
+
     return new_reading
 
 from typing import List
@@ -36,3 +41,21 @@ def get_readings(sensor_id: str, limit: int = 50, db: Session = Depends(get_db))
         .limit(limit)
         .all()
     )
+
+from typing import List
+
+@app.post("/readings/batch", response_model=List[SensorReadingOut])
+def ingest_batch(readings: List[SensorReadingCreate], db: Session = Depends(get_db)):
+    new_readings = [
+        SensorReading(
+            sensor_id=r.sensor_id,
+            metric=r.metric,
+            value=r.value,
+        )
+        for r in readings
+    ]
+    db.add_all(new_readings)
+    db.commit()
+    for r in new_readings:
+        db.refresh(r)
+    return new_readings
